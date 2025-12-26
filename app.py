@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import webbrowser
 import hashlib
 import random
 
@@ -144,7 +143,7 @@ with tab2:
             .size()
             .reset_index(name="Number of Songs")
         )
-        st.dataframe(overview, width=True)
+        st.dataframe(overview, width="stretch")
 
         # Summary stats
         total_songs = len(st.session_state.uploaded_playlists)
@@ -261,8 +260,6 @@ with tab1:
             "uri": track_uri,
         }
 
-        webbrowser.open(track_uri)
-
         st.session_state.current_index += 1
 
         num_players = len(st.session_state.player_order)
@@ -315,6 +312,9 @@ with tab1:
         st.write(f"**Release year:** {song['release_year']}")
         st.write(f"**Playlist year(s):** {song['playlist_years']}")
         st.write(f"**Appears in playlists of:** {song['users']}")
+
+        # Add clickable link to play full song on Spotify
+        st.link_button("🎵 Play on Spotify", song["uri"], width="stretch")
 
     # -----------------------
     # Game controls
@@ -374,11 +374,11 @@ with tab1:
             st.info(
                 "🎵 That was the last song! Score it below, then click 'Finish Game' to see the winner."
             )
-            st.button("🏁 Finish Game", on_click=finish_game)
+            st.button("🏁 Finish Game", on_click=finish_game, width="stretch")
         else:
             # More songs to play
             show_pause_reminder()
-            st.button("▶️ Play Next Song", on_click=play_next_song)
+            st.button("▶️ Play Next Song", on_click=play_next_song, width="stretch")
 
             # Show who will play AFTER the next click
             if st.session_state.player_order:

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import webbrowser
 import hashlib
+import random
 
 # -----------------------
 # App setup
@@ -38,6 +39,15 @@ if "uploaded_playlists" not in st.session_state:
 
 if "playlist_hashes" not in st.session_state:
     st.session_state.playlist_hashes = set()
+
+if "previous_song_year" not in st.session_state:
+    st.session_state.previous_song_year = None
+
+if "current_song_year" not in st.session_state:
+    st.session_state.current_song_year = None
+
+if "game_finished" not in st.session_state:
+    st.session_state.game_finished = False
 
 # -----------------------
 # Tabs
@@ -134,7 +144,7 @@ with tab2:
             .size()
             .reset_index(name="Number of Songs")
         )
-        st.dataframe(overview, use_container_width=True)
+        st.dataframe(overview, width=True)
 
         # Summary stats
         total_songs = len(st.session_state.uploaded_playlists)
@@ -153,20 +163,6 @@ with tab2:
 # TAB 1: Game
 # -----------------------
 with tab1:
-    if st.session_state.current_song:
-        song = st.session_state.current_song
-
-        st.subheader(f"🎵 Song {song['index']} / {song['total']}")
-        st.write(f"**Track:** {song['track']}")
-        st.write(f"**Artist:** {song['artist']}")
-        st.write(f"**Release year:** {song['release_year']}")
-        st.write(f"**Playlist year(s):** {song['playlist_years']}")
-        st.write(f"**Appears in playlists of:** {song['users']}")
-
-    if st.session_state.game_playlist is not None and st.session_state.player_order:
-        current_player = st.session_state.player_order[st.session_state.current_turn]
-        st.info(f"🎯 **It's {current_player}'s turn!**")
-
     # -----------------------
     # Load data
     # -----------------------
@@ -196,7 +192,10 @@ with tab1:
 
         selected = (
             df.groupby("User", group_keys=False)
-            .apply(lambda x: x.sample(n=min(songs_per_user, len(x))))
+            .apply(
+                lambda group: group.sample(n=min(songs_per_user, len(group))),
+                include_groups=False,
+            )
             .reset_index(drop=True)
         )
 
@@ -204,6 +203,20 @@ with tab1:
 
         st.session_state.game_playlist = playlist
         st.session_state.current_index = 0
+        st.session_state.game_finished = False
+
+        # Set initial random year for the first song based on collection range
+        if "release_year" in df.columns:
+            valid_years = df["release_year"].dropna()
+            if len(valid_years) > 0:
+                min_year = int(valid_years.min())
+                max_year = int(valid_years.max())
+                st.session_state.previous_song_year = random.randint(min_year, max_year)
+            else:
+                st.session_state.previous_song_year = None
+        else:
+            st.session_state.previous_song_year = None
+
         st.success("🎮 Game started! Click 'Play Next Song'")
 
     def play_next_song():
@@ -224,6 +237,17 @@ with tab1:
             (df["Track Name"] == track_name) & (df["Artist Name(s)"] == artist)
         ]
 
+        # BEFORE overwriting, shift current -> previous
+        if st.session_state.current_song_year is not None:
+            st.session_state.previous_song_year = st.session_state.current_song_year
+
+        # Update current song year (for NEXT time)
+        if release_year != "Unknown":
+            st.session_state.current_song_year = release_year
+        else:
+            st.session_state.current_song_year = None
+
+        # Store the current song info
         st.session_state.current_song = {
             "index": idx + 1,
             "total": len(playlist),
@@ -241,7 +265,6 @@ with tab1:
 
         st.session_state.current_index += 1
 
-        # Advance turn
         num_players = len(st.session_state.player_order)
         if num_players > 0:
             st.session_state.current_turn = (
@@ -251,6 +274,10 @@ with tab1:
     def update_score(player, points):
         st.session_state.scores[player] += points
 
+    def finish_game():
+        """Mark the game as finished after the last song has been scored"""
+        st.session_state.game_finished = True
+
     def restart_game():
         st.session_state.game_playlist = None
         st.session_state.current_index = 0
@@ -258,6 +285,36 @@ with tab1:
         st.session_state.scores = {}
         st.session_state.player_order = []
         st.session_state.current_turn = 0
+        st.session_state.previous_song_year = None
+        st.session_state.current_song_year = None
+        st.session_state.game_finished = False
+
+    # -----------------------
+    # Display current song
+    # -----------------------
+    if st.session_state.current_song and not st.session_state.game_finished:
+        song = st.session_state.current_song
+
+        st.subheader(f"🎵 Song {song['index']} / {song['total']}")
+
+        # Display whose turn it is alongside the song
+        if st.session_state.player_order:
+            current_player = st.session_state.player_order[
+                st.session_state.current_turn
+            ]
+            st.info(f"🎯 **It's {current_player}'s turn!**")
+
+        # Display previous song's release year
+        if st.session_state.previous_song_year is not None:
+            st.write(
+                f"🕒 **Previous song was released in:** {st.session_state.previous_song_year}"
+            )
+
+        st.write(f"**Track:** {song['track']}")
+        st.write(f"**Artist:** {song['artist']}")
+        st.write(f"**Release year:** {song['release_year']}")
+        st.write(f"**Playlist year(s):** {song['playlist_years']}")
+        st.write(f"**Appears in playlists of:** {song['users']}")
 
     # -----------------------
     # Game controls
@@ -281,37 +338,54 @@ with tab1:
         st.session_state.songs_per_player = songs_per_player
 
         st.button("🎮 Start Game", on_click=start_game)
+
+    elif st.session_state.game_finished:
+        # Game is completely over - show winner and restart option
+        st.success("🎉 **Game Over!**")
+
+        # Display winner(s)
+        if st.session_state.scores:
+            max_score = max(st.session_state.scores.values())
+            winners = [
+                player
+                for player, score in st.session_state.scores.items()
+                if score == max_score
+            ]
+
+            if len(winners) == 1:
+                st.subheader(f"👑 Winner: {winners[0]} with {max_score} points!")
+            else:
+                st.subheader(
+                    f"👑 It's a tie! Winners: {', '.join(winners)} with {max_score} points!"
+                )
+        else:
+            st.info("No scores recorded.")
+
+        st.button("🔄 Restart Game", on_click=restart_game)
+
     else:
-        # Check if game is over
-        game_over = st.session_state.current_index >= len(
+        # Game is in progress
+        all_songs_played = st.session_state.current_index >= len(
             st.session_state.game_playlist
         )
 
-        if game_over:
-            st.success("🎉 **Game Over!**")
-
-            # Display winner(s)
-            if st.session_state.scores:
-                max_score = max(st.session_state.scores.values())
-                winners = [
-                    player
-                    for player, score in st.session_state.scores.items()
-                    if score == max_score
-                ]
-
-                if len(winners) == 1:
-                    st.subheader(f"👑 Winner: {winners[0]} with {max_score} points!")
-                else:
-                    st.subheader(
-                        f"👑 It's a tie! Winners: {', '.join(winners)} with {max_score} points!"
-                    )
-            else:
-                st.info("No scores recorded.")
-
-            st.button("🔄 Restart Game", on_click=restart_game)
+        if all_songs_played:
+            # All songs have been played, but allow scoring the last one
+            st.info(
+                "🎵 That was the last song! Score it below, then click 'Finish Game' to see the winner."
+            )
+            st.button("🏁 Finish Game", on_click=finish_game)
         else:
+            # More songs to play
             show_pause_reminder()
             st.button("▶️ Play Next Song", on_click=play_next_song)
+
+            # Show who will play AFTER the next click
+            if st.session_state.player_order:
+                num_players = len(st.session_state.player_order)
+                next_turn = (st.session_state.current_turn + 1) % num_players
+                next_player = st.session_state.player_order[next_turn]
+                st.caption(f"🔜 Next up: {next_player}")
 
     # -----------------------
     # Scoreboard
@@ -319,7 +393,7 @@ with tab1:
     st.divider()
     st.header("🏆 Scoreboard")
 
-    # Add player
+    # Add player (only before game starts)
     if st.session_state.game_playlist is None:
         st.subheader("👥 Players")
 
@@ -335,8 +409,8 @@ with tab1:
     else:
         st.info("🔒 Players are locked for this game.")
 
-    # Add points
-    if st.session_state.scores:
+    # Add points (available during game and after last song, but not after "Finish Game")
+    if st.session_state.scores and not st.session_state.game_finished:
         player = st.selectbox("Player", list(st.session_state.scores.keys()))
         points = st.number_input("Points", step=1, value=1)
 
